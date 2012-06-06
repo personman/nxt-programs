@@ -2,12 +2,20 @@
 Tilted Twister, http://tiltedtwister.com
 Hans Andersson 2010-08-15
 
+Some minor modifications by Henrik Björkman 2012-01-04
+
 Wiring:
 1 Color sensor
 2 Ultrasonic sensor
 A Center motor
 B Tilter arm motor
 C Color sensor motor
+
+
+http://bricxcc.sourceforge.net/nbc/nxcdoc/nxcapi/group___input_module_functions_gaf8e01f28be7f3476baface8d4515357f.html
+
+
+
 */
 
 #define LEFTFACE      0
@@ -87,11 +95,11 @@ C Color sensor motor
 #define  DOWNFACE_DOWNMID     52
 #define  DOWNFACE_DOWNRIGHT   53
 
-#define SENSORPOS_HOME      50
+#define SENSORPOS_HOME      50    // A position out of the way for turntable
 #define SENSORPOS_CENTER    150
 #define SENSORPOS_CORNERS   177
 #define SENSORPOS_EDGES     172
-#define SENSORPOS_LASTEDGE  130
+#define SENSORPOS_LASTEDGE  131   // Changed from 130 /Henrik
 
 #define OFFSET_EDGE       35
 #define OFFSET_LASTEDGE   200
@@ -110,6 +118,15 @@ C Color sensor motor
 #define REMOTESOLVE_OK      0
 #define REMOTESOLVE_ERROR   1
 #define REMOTESOLVE_ABSENT  2
+
+// http://bricxcc.sourceforge.net/nbc/nxcdoc/nxcapi/group___input_color_value_constants.html#_details
+#define 	INPUT_BLACKCOLOR   1
+#define 	INPUT_BLUECOLOR   2
+#define 	INPUT_GREENCOLOR   3
+#define 	INPUT_YELLOWCOLOR   4
+#define 	INPUT_REDCOLOR   5
+#define 	INPUT_WHITECOLOR   6
+
 
 int staticOrientations[]={
 LEFTFACE,FRONTFACE,RIGHTFACE,BACKFACE,UPPERFACE,DOWNFACE,
@@ -188,7 +205,7 @@ int  solutionTwists;
 int  twists;
 char staticfaces[]={'L','F','R','B','U','D'};
 char faces[]={'L','F','R','B','U','D'};
-bool cubeGrabbed;
+bool cubeGrabbed;  //True if tilt arm is holding the cube
 int  currentAngle; //Current position of turntable
 int  tiltPower=85; //Initial tiltpower. Continuously adjusted depending on actual speed
 int  grabPower;
@@ -259,43 +276,84 @@ inline int EdgeGet(int edge, int side)
 }
 
 
+// first wait, then check orange button for pause
+void waitAndCheckButton(int t)
+{
+  Wait(t);
+  while (ButtonPressed(BTNCENTER,false))
+  {
+    // button was pressed, make a short pause
+    //TextOut(20,LCD_LINE5,"pause",true);
+    Wait(50);
+  }
+}
+
+void moveToMechanicalStop(int output, int pwr)
+{
+  int angle = MotorRotationCount(output);
+  OnFwd(output,pwr);
+  for(;;)
+  {
+    Wait(50);
+    int tmpAngle = MotorRotationCount(output);
+    if (angle == tmpAngle) break;
+    angle = tmpAngle;
+  }
+  Off(output);
+}
+
+
 void Tilt()
 {
-  long tachoPrevious,tachoNow;
-  unsigned long tick,time;
-  Coast(OUT_A);
-  Wait(200);
-  tick=CurrentTick();
-  OnFwd(OUT_B,tiltPower);
-  while(MotorRotationCount(OUT_B)<65);
-  time=CurrentTick()-tick;
-  Off(OUT_B);
-  if(time > 215)
+
   {
-    tiltPower += 1 + (time-215)/10;
-    if(tiltPower>100)
-      tiltPower=100;
+    unsigned long tick,time;
+
+    Coast(OUT_A); // Release brake on turntable alias center motor
+    waitAndCheckButton(200);
+    tick=CurrentTick();
+    OnFwd(OUT_B,tiltPower); // Move tilt arm out
+    while(MotorRotationCount(OUT_B)<65);
+    time=CurrentTick()-tick;
+    Off(OUT_B); // Stop and brake tilt arm
+    if(time > 215)
+    {
+      // it took to long time, increase power for next tilt
+      tiltPower += 1 + (time-215)/10;
+      if(tiltPower>100)
+        tiltPower=100;
+    }
+    else
+    {
+      // it took to short time, decrease power for next tilt
+      tiltPower--;
+    }
+    grabPower=tiltPower/11;
+    Wait(TILTREST);
   }
-  else
-    tiltPower--;
-  grabPower=tiltPower/11;
-  Wait(TILTREST);
-  OnFwd(OUT_B,-100);
-  while(MotorRotationCount(OUT_B)>40);
-  OnFwd(OUT_B,-20);
-  while(MotorTachoCount(OUT_B)>20);
-  tachoNow=MotorTachoCount(OUT_B);
-  do{
-    tachoPrevious=tachoNow;
-    Wait(10);
-    tachoNow=MotorTachoCount(OUT_B);
-  }while(tachoNow!=tachoPrevious);
-  Coast(OUT_B);
+
+  {
+    long tachoPrevious,tachoNow;
+
+    // Start retracting tilt arm
+    OnFwd(OUT_B,-50); // Changed from 100% to less. /Henrik
+    while(MotorRotationCount(OUT_B)>60) ; // Changed from 40 to 60 to make tilt arm move back a bit slower /Henrik
+    OnFwd(OUT_B,-30); // Continue retracting tilt arm with less power
+    while(MotorTachoCount(OUT_B)>20); // retract untill almost home
+
+    // Contintue retracting until home alias mechanical stop (arm can't move more)
+    moveToMechanicalStop(OUT_B,-20);
+    Coast(OUT_B); // Stop tilt arm motor and release brake
+  }
+  
+  // Adjust faces according to the tilt
   char uf=faces[UPPERFACE];
   faces[UPPERFACE]=faces[LEFTFACE];
   faces[LEFTFACE]=faces[DOWNFACE];
   faces[DOWNFACE]=faces[RIGHTFACE];
   faces[RIGHTFACE]=uf;
+
+  waitAndCheckButton(500);
 }
 
 
@@ -307,7 +365,7 @@ void GrabCube()
   OnFwd(OUT_B,20);
   while(MotorRotationCount(OUT_B)<30);
   OnFwd(OUT_B,grabPower);
-  Wait(300);
+  waitAndCheckButton(300);
   cubeGrabbed=true;
 }
 
@@ -317,20 +375,20 @@ void ReleaseCube()
   int tachoNow,tachoPrevious;
   Off(OUT_A);
   Off(OUT_B);
-  OnFwd(OUT_B,-100);
+  OnFwd(OUT_B,-50);  // Reduced from -100% /Henrik
   while(MotorRotationCount(OUT_B)>20);
-  OnFwd(OUT_B,-20);
-  while(MotorTachoCount(OUT_B)>20);
-  tachoNow=MotorTachoCount(OUT_B);
-  do
-  {
-    tachoPrevious=tachoNow;
-    Wait(10);
-    tachoNow=MotorTachoCount(OUT_B);
-  }while(tachoNow!=tachoPrevious);
+
+  // Contintue retracting until home alias mechanical stop (arm can't move more)
+  moveToMechanicalStop(OUT_B,-20);
+
   Coast(OUT_B);
   cubeGrabbed=false;
+  
+  waitAndCheckButton(500);
 }
+
+
+
 
 
 void TurnTo(int newAngle)
@@ -340,37 +398,67 @@ void TurnTo(int newAngle)
   long pwr;
   int speed;
   int distance;
+  int jammed=0;
+
   if(newAngle!=currentAngle)
   {
-    if(newAngle==0) //home
+    if(newAngle==0) // home, move to mechanical stop
     {
-      OnFwd(OUT_A,100);
-      do
+      if(!cubeGrabbed)
       {
-        angle1=MotorRotationCount(OUT_A);
+        moveToMechanicalStop(OUT_A, 25);
+      }
+      else
+      {
+        OnFwd(OUT_A,100);
         Wait(20);
-        angle2=MotorRotationCount(OUT_A);
-        speed=abs(angle2-angle1);
-        distance=abs(newAngle-angle2);
-        if(speed>11)
+        do
         {
-          pwr=20+distance;
-          if(pwr<100)
-            OnFwd(OUT_A,pwr);
-        }
-      }while(distance>30 || angle2!=angle1);
-      Off(OUT_A);
-      Wait(300);
+          angle1=MotorRotationCount(OUT_A);
+          Wait(20);
+          angle2=MotorRotationCount(OUT_A);
+          speed=abs(angle2-angle1);
+          distance=abs(newAngle-angle2);
+          if(speed>11)
+          {
+            pwr=20+distance;
+            if(pwr<100)
+              OnFwd(OUT_A,pwr);
+          }
+        
+          if ((speed==0) && (distance>45) && (jammed<6))
+          {
+            // Cube is jammed, try to unjam it.
+            ++jammed;
+            TextOut(0,LCD_LINE6,"jam",true);
+            OnRev(OUT_A,100);
+            Wait(50);
+            Coast(OUT_A);
+            waitAndCheckButton(200);
+            OnFwd(OUT_A,100);
+            Wait(50);
+          }
+
+        }while(distance>30 || angle2!=angle1);
+        Off(OUT_A);
+        waitAndCheckButton(300);
+      }
+    }
+    else if ((newAngle<=-270) || (newAngle>=270)) // mechanical stop at other end
+    {
+      moveToMechanicalStop(OUT_A, -25);
     }
     else
     {
-      int angle=newAngle - MotorRotationCount(OUT_A);
+      //int angle=newAngle - MotorRotationCount(OUT_A);
+      int angle=newAngle - currentAngle;
       ResetTachoCount(OUT_A);
-      Wait(50);
+      waitAndCheckButton(50);
+
       RotateMotor(OUT_A,60,angle);
-      Wait(300);
+      waitAndCheckButton(100);
     }
-    int angle=MotorRotationCount(OUT_A);
+    //int angle=MotorRotationCount(OUT_A);
     if(!cubeGrabbed)
     {
       int num=(4+(currentAngle-newAngle)/90)%4;
@@ -398,12 +486,45 @@ void Twist(int num)
 {
   int angle=num * -90;
   if(angle==currentAngle)
-    Wait(TILTREST);
+    waitAndCheckButton(TILTREST);
   else
     TurnTo(angle);
   GrabCube();
   TurnTo(0);
   ReleaseCube();
+
+  waitAndCheckButton(200);
+}
+
+
+void testMotor(int input, int pwr)
+{
+  int tachoPrevious;
+  int tachoNow;
+  
+  OnRev(input,pwr);
+  Wait(200);
+
+  tachoPrevious=MotorTachoCount(input);
+
+  OnFwd(input,pwr);
+  Wait(200);
+
+  tachoNow=MotorTachoCount(input);
+  
+  if (tachoPrevious == tachoNow)
+  {
+    PlayTone(400,1000);
+    switch (input)
+    {
+      case OUT_A: TextOut(0,LCD_LINE6,"motor A not moving",true); break;
+      case OUT_B: TextOut(0,LCD_LINE6,"motor B not moving",true); break;
+      case OUT_C: TextOut(0,LCD_LINE6,"motor C not moving",true); break;
+      default: TextOut(0,LCD_LINE6,"unknown not moving",true); break;
+
+    }
+    waitAndCheckButton(5000);
+  }
 }
 
 
@@ -413,34 +534,43 @@ void Twist(int num)
 void InitTurntable()
 {
   int tachoNow,tachoPrevious;
-  OnFwd(OUT_A,15);
-  do
-  {
-    tachoPrevious=tachoNow;
-    Wait(100);
-    tachoNow=MotorTachoCount(OUT_A);
-  }while(tachoNow!=tachoPrevious);
-  Coast(OUT_A);
-  Wait(500);
+  TextOut(7,LCD_LINE4,"homing turntable",true);
+
+  // just to see that it moves, start moving in "wrong" direction. It helps trouble shooting if it always moves a bit at start.
+  testMotor(OUT_A, 25);
+
+
+
+
+  // Now move to the home position (mechanical stop)
+  moveToMechanicalStop(OUT_A, 25);
+  
+
   ResetAllTachoCounts(OUT_A);
-  Wait(500);
   currentAngle=0;
+
+  // set motor to idle
+  Coast(OUT_A);
+
+  waitAndCheckButton(500);
 }
 
 
 void InitTilter()
 {
   int tachoNow,tachoPrevious;
-  OnFwd(OUT_B,-20);
-  tachoNow=MotorTachoCount(OUT_B);
-  do
-  {
-    tachoPrevious=tachoNow;
-    Wait(100);
-    tachoNow=MotorTachoCount(OUT_B);
-  }while(tachoNow!=tachoPrevious);
+  TextOut(7,LCD_LINE4,"homing tilter  ",true);
+
+  testMotor(OUT_B, -25);
+
+
+  // Now move to the home position (mechanical stop)
+  moveToMechanicalStop(OUT_B, -25);
+
+  // set motor to idle
   Coast(OUT_B);
-  Wait(500);
+
+  waitAndCheckButton(500);
   ResetAllTachoCounts(OUT_B);
 }
 
@@ -448,18 +578,26 @@ void InitTilter()
 void InitScanner()
 {
   int tachoNow,tachoPrevious;
-  OnFwd(OUT_C,-15);
-  tachoNow=MotorTachoCount(OUT_C);
-  do
-  {
-    tachoPrevious=tachoNow;
-    Wait(100);
-    tachoNow=MotorTachoCount(OUT_C);
-  }while(tachoNow!=tachoPrevious);
+  TextOut(7,LCD_LINE4,"homing scanner   ",true);
+
+
+  // just to see that it moves, start moving in "wrong" direction. It helps trouble shooting if it always moves a bit at start.
+  testMotor(OUT_B, -25);
+
+
+  // Now move to mechanical stop
+  moveToMechanicalStop(OUT_C, -25);
+
+
+  // stop arm movement
   Off(OUT_C);
-  Wait(500);
+
+  waitAndCheckButton(500);
   ResetAllTachoCounts(OUT_C);
-  Wait(500);
+
+
+  // Move the arm to a position where its not in the way for the turnetable.
+  waitAndCheckButton(500);
   RotateMotor(OUT_C,10,SENSORPOS_HOME);
 }
 
@@ -476,13 +614,69 @@ void Initialize()
 //*****************************************************************************
 // Scan cube
 
-inline void DrawFacelet(int pos)
+//  6 3 0
+//  7 4 1
+//  8 5 2
+inline void DrawFacelet(int pos, int colorval)
 {
-  RectOut(59-(pos/3)*17,42-(pos%3)*17,15,15);
+  const int col = 3 - pos/3;
+  const int row = 3 - pos%3;
+
+  const int x = 8 + col*24;
+  const int y = 8 + row*8;
+
+  //RectOut(59-(pos/3)*17,42-(pos%3)*17,15,15);
+
+
+  NumOut (64, LCD_LINE8, pos);
+  NumOut (80, LCD_LINE8, colorval);
+
+  switch(colorval)
+  {
+  	case INPUT_BLACKCOLOR:
+    {
+      TextOut(x,y,"bla");
+      //TextOut(0,LCD_LINE8,"black      ");
+      PlayTone(400,1000); waitAndCheckButton(1000);
+      break;
+    }
+  	case INPUT_BLUECOLOR:
+    {
+      TextOut(x,y,"blu");
+      //TextOut(0,LCD_LINE8,"blue       ");
+      break;
+    }
+  	case INPUT_GREENCOLOR:
+    {
+      TextOut(x,y,"gre");
+      //TextOut(0,LCD_LINE8,"grean      ");
+      break;
+    }
+  	case INPUT_YELLOWCOLOR:
+    {
+      TextOut(x,y,"yel");
+      //TextOut(0,LCD_LINE8,"yellow     ");
+      break;
+    }
+  	case INPUT_REDCOLOR:
+    {
+      TextOut(x,y,"r/o");
+      //TextOut(0,LCD_LINE8,"red/orange ");
+      break;
+    }
+  	case INPUT_WHITECOLOR:
+    {
+      TextOut(x,y,"whi");
+      //TextOut(0,LCD_LINE8,"white      ");
+      break;
+    }
+  	default: TextOut(0,LCD_LINE8,"black"); break;
+  }
+
 }
 
 
-void ReadColor(int face, int pos)
+void ReadColor(int face, int pos, int fpos)
 {
   int colorval;
   unsigned int raw[];
@@ -497,6 +691,8 @@ void ReadColor(int face, int pos)
   cubeColor[tile].rawRed=raw[0];
   cubeColor[tile].rawGreen=raw[1];
   cubeColor[tile].rawBlue=raw[2];
+
+  DrawFacelet(fpos, colorval);
 }
 
 
@@ -505,35 +701,30 @@ void ScanFace(int face,int c1,int c2,int c3,int c4,int c5,int c6,int c7,int c8,i
   TurnTo(0);
   ResetTachoCount(OUT_A);
   ClearScreen();
+  
+  TextOut(0,LCD_LINE1,"scan face  ");
+  NumOut (80, LCD_LINE1, face);
+
   RotateMotorEx(OUT_C,20,SENSORPOS_CENTER-SENSORPOS_HOME,0,false,false);
-  ReadColor(face,CENTER);
-  DrawFacelet(CENTER);
+  ReadColor(face,CENTER, CENTER);
   RotateMotor(OUT_C,20,SENSORPOS_CORNERS-SENSORPOS_CENTER);
-  ReadColor(face,c1);
-  DrawFacelet(UPPERRIGHT);
+  ReadColor(face,c1, UPPERRIGHT);
   RotateMotorEx(OUT_A,SCANSPEED,-90,0,false,false);
-  ReadColor(face,c2);
-  DrawFacelet(DOWNRIGHT);
+  ReadColor(face,c2, DOWNRIGHT);
   RotateMotorEx(OUT_A,SCANSPEED,-90,0,false,false);
-  ReadColor(face,c3);
-  DrawFacelet(DOWNLEFT);
+  ReadColor(face,c3, DOWNLEFT);
   RotateMotor(OUT_A,SCANSPEED,-90);
-  ReadColor(face,c4);
-  DrawFacelet(UPPERLEFT);
+  ReadColor(face,c4,UPPERLEFT);
   RotateMotor(OUT_C,10,SENSORPOS_EDGES-SENSORPOS_CORNERS);
   RotateMotorEx(OUT_A,SCANSPEED,OFFSET_EDGE,0,false,false);
-  ReadColor(face,c5);
-  DrawFacelet(MIDLEFT);
+  ReadColor(face,c5,MIDLEFT);
   RotateMotorEx(OUT_A,SCANSPEED,90,0,false,false);
-  ReadColor(face,c6);
-  DrawFacelet(UPPERMID);
+  ReadColor(face,c6,UPPERMID);
   RotateMotorEx(OUT_A,SCANSPEED,90,0,false,false);
-  ReadColor(face,c7);
-  DrawFacelet(MIDRIGHT);
-  RotateMotor(OUT_A,SCANSPEED,OFFSET_LASTEDGE - 270 - OFFSET_EDGE);
+  ReadColor(face,c7,MIDRIGHT);
+  RotateMotor(OUT_A,SCANSPEED,OFFSET_LASTEDGE - 270 - OFFSET_EDGE); // ....
   RotateMotorEx(OUT_C,20,SENSORPOS_LASTEDGE-SENSORPOS_EDGES,0,false,false);
-  ReadColor(face,c8);
-  DrawFacelet(DOWNMID);
+  ReadColor(face,c8,DOWNMID);
   RotateMotor(OUT_C,20,SENSORPOS_HOME-SENSORPOS_LASTEDGE);
   currentAngle=-1;
   TurnTo(endAngle);
@@ -542,6 +733,8 @@ void ScanFace(int face,int c1,int c2,int c3,int c4,int c5,int c6,int c7,int c8,i
 
 void ScanCube()
 {
+  TextOut(7,LCD_LINE4,"Scanning cube",true);
+
   SetSensorColorFull(IN_1);
   ScanFace(BACKFACE,UPPERRIGHT,UPPERLEFT,DOWNLEFT,DOWNRIGHT,DOWNMID,MIDLEFT,UPPERMID,MIDRIGHT,0);
   Tilt();
@@ -563,10 +756,12 @@ void ScanCube()
 
 void Sorry()
 {
+  PlayTone(400,100);
+
   TextOut(5,LCD_LINE2,"SORRY",true);
   TextOut(5,LCD_LINE4,"Can't resolve" );
   TextOut(5,LCD_LINE5,"colors" );
-  PlayFile("Sorry.rso");
+  //PlayFile("Sorry.rso");
 }
 
 
@@ -821,6 +1016,7 @@ string ColorToStr(int face, int pos)
 
 void DumpCube()
 {
+  #if 0
   int handle;
   DeleteFile("rubikscube.txt");
   CreateFile("rubikscube.txt", 4000, handle);
@@ -895,6 +1091,7 @@ void DumpCube()
     msg=NumToStr(col.blue); WriteLnString(handle,msg,count);
   }
   CloseFile(handle);
+  #endif
 }
 
 
@@ -1931,7 +2128,7 @@ bool SolveCube()
     LoadCube();
     Solve('L','R');
     NumOut (80, LCD_LINE6, twists);
-    Wait(500);
+    waitAndCheckButton(500);
     if(twists < solutionTwists)
       SaveSolution();
     return true;
@@ -1980,10 +2177,10 @@ void DoMoves()
     Twist(turns);
     NumOut(40,LCD_LINE4,--solutionTwists,true);
   }
-  Wait(1000);
+  waitAndCheckButton(1000);
   TextOut(20,LCD_LINE4,"GAME OVER",true);
-  PlayFile("Game Over.rso");
-  Wait(2000);
+  //PlayFile("Game Over.rso");
+  waitAndCheckButton(2000);
   Coast(OUT_A);
 }
 
@@ -1993,20 +2190,28 @@ void DoMoves()
 void WaitForCube()
 {
   TextOut(7,LCD_LINE4,"GIVE ME A CUBE",true);
-  Wait(2000);
+  waitAndCheckButton(2000);
   unsigned long startTick=CurrentTick();
-  do
+  for(;;)
   {
     if(SensorUS(IN_2) > 10)
-      startTick=CurrentTick();
-  }while(CurrentTick() - startTick < 1000 && !ButtonPressed(BTNCENTER,false));
-  TextOut(20,LCD_LINE5,"THANK YOU !",true);
-  PlayFile("Thank You.rso");
-  Wait(2000);
+    {
+      TextOut(7,LCD_LINE4,"CUBE DETECTED",true);
+      break;
+    }
+    if (ButtonPressed(BTNCENTER,false))
+    {
+      TextOut(20,LCD_LINE5,"THANK YOU!",true);
+      break;
+    }
+  }
+
+  //PlayFile("Thank You.rso");
+  waitAndCheckButton(2000);
 }
 
 
-void WaitForCubeRemove()  //Wait until cube absent for three seconds or button pressed
+void WaitForCubeRemove()  // Wait until cube absent for three seconds or button pressed
 {
   unsigned long startTick=CurrentTick();
   do
