@@ -761,7 +761,7 @@ void Sorry()
   TextOut(5,LCD_LINE2,"SORRY",true);
   TextOut(5,LCD_LINE4,"Can't resolve" );
   TextOut(5,LCD_LINE5,"colors" );
-  //PlayFile("Sorry.rso");
+  PlayFile("Sorry.rso");
 }
 
 
@@ -2179,7 +2179,7 @@ void DoMoves()
   }
   waitAndCheckButton(1000);
   TextOut(20,LCD_LINE4,"GAME OVER",true);
-  //PlayFile("Game Over.rso");
+  PlayFile("Game Over.rso");
   waitAndCheckButton(2000);
   Coast(OUT_A);
 }
@@ -2206,7 +2206,7 @@ void WaitForCube()
     }
   }
 
-  //PlayFile("Thank You.rso");
+  PlayFile("Thank You.rso");
   waitAndCheckButton(2000);
 }
 
